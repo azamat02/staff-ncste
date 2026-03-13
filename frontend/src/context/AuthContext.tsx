@@ -1,0 +1,121 @@
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { authApi, Admin, User } from '../services/api';
+
+interface AuthContextType {
+  admin: Admin | null;
+  user: User | null;
+  role: 'admin' | 'operator' | 'user' | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  mustChangePassword: boolean;
+  login: (username: string, password: string) => Promise<'admin' | 'operator' | 'user'>;
+  logout: () => void;
+  clearMustChangePassword: () => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const [admin, setAdmin] = useState<Admin | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [role, setRole] = useState<'admin' | 'operator' | 'user' | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+
+    if (token) {
+      authApi
+        .getMe()
+        .then((response) => {
+          const data = response.data;
+          const r = data.role as 'admin' | 'operator' | 'user';
+          setRole(r);
+          if ((r === 'admin' || r === 'operator') && data.admin) {
+            setAdmin({ ...data.admin, isSuperAdmin: data.admin.role === 'SUPER_ADMIN' });
+            setUser(null);
+            setMustChangePassword(false);
+          } else if (r === 'user' && data.user) {
+            setUser(data.user);
+            setAdmin(null);
+            setMustChangePassword(!!data.user.mustChangePassword);
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('token');
+          localStorage.removeItem('role');
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    } else {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const login = async (username: string, password: string): Promise<'admin' | 'operator' | 'user'> => {
+    const response = await authApi.login(username, password);
+    const data = response.data;
+
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('role', data.role);
+    const r = data.role as 'admin' | 'operator' | 'user';
+    setRole(r);
+
+    if ((r === 'admin' || r === 'operator') && data.admin) {
+      setAdmin({ ...data.admin, isSuperAdmin: data.admin.role === 'SUPER_ADMIN' });
+      setUser(null);
+      setMustChangePassword(false);
+    } else if (r === 'user' && data.user) {
+      setUser(data.user);
+      setAdmin(null);
+      setMustChangePassword(!!data.mustChangePassword);
+    }
+
+    return r;
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    setAdmin(null);
+    setUser(null);
+    setRole(null);
+    setMustChangePassword(false);
+  };
+
+  const clearMustChangePassword = () => {
+    setMustChangePassword(false);
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        admin,
+        user,
+        role,
+        isLoading,
+        isAuthenticated: !!(admin || user),
+        mustChangePassword,
+        login,
+        logout,
+        clearMustChangePassword,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
